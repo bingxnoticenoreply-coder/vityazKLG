@@ -47,14 +47,17 @@ std::string getParam(const std::string& src, const std::string& key) {
         ? src.substr(pos) : src.substr(pos, end-pos));
 }
 
+// Permette lettere, numeri, trattino e underscore
 std::string sanitizeId(const std::string& s) {
     std::string out;
     for (char c : s)
-        if (isalnum(c) || c=='_') { out += c; if (out.size()>=32) break; }
-    return out.empty() ? "pc_default" : out;
+        if (isalnum(c) || c=='_' || c=='-') {
+            out += c;
+            if (out.size() >= 64) break;
+        }
+    return out.empty() ? "pc_unknown" : out;
 }
 
-// Chiamata HTTPS a Supabase
 void supabaseInsert(const std::string& pcId, const std::string& riga) {
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) return;
@@ -77,7 +80,6 @@ void supabaseInsert(const std::string& pcId, const std::string& riga) {
         SSL_free(ssl); SSL_CTX_free(ctx); close(sock); return;
     }
 
-    // Escape JSON
     std::string escPc, escRiga;
     for (char c : pcId)  { if(c=='"') escPc+="\\\""; else escPc+=c; }
     for (char c : riga)  { if(c=='"') escRiga+="\\\""; else if(c=='\\') escRiga+="\\\\"; else escRiga+=c; }
@@ -93,15 +95,11 @@ void supabaseInsert(const std::string& pcId, const std::string& riga) {
         "Connection: close\r\n\r\n" + body;
 
     SSL_write(ssl, req.c_str(), req.size());
-
-    // Leggi risposta (non serve il body, solo per completare la transazione)
     char buf[1024]; int n;
     while ((n = SSL_read(ssl, buf, sizeof(buf)-1)) > 0) {}
-
     SSL_free(ssl); SSL_CTX_free(ctx); close(sock);
 }
 
-// Leggi richiesta HTTP completa
 std::string readFullRequest(int sock) {
     std::string req;
     char buf[4096];
@@ -154,11 +152,11 @@ void handleHTTP(int sock) {
         sendHTTP(sock, "application/json", "{\"status\":\"ok\"}");
 
     } else if (path == "/send" && method == "POST") {
-        std::string key  = getParam(query, "key");
+        std::string key = getParam(query, "key");
         if (key.empty()) key = getParam(body, "key");
         std::string pcId = sanitizeId(getParam(query, "pc"));
         if (pcId.empty()) pcId = sanitizeId(getParam(body, "pc"));
-        if (pcId.empty()) pcId = "pc_default";
+        if (pcId.empty()) pcId = "pc_unknown";
         std::string riga = getParam(body, "riga");
 
         if (key != PASSWORD) {
@@ -167,7 +165,6 @@ void handleHTTP(int sock) {
             sendHTTP(sock, "application/json", "{\"status\":\"error\",\"msg\":\"riga vuota\"}");
         } else {
             std::string entry = timestamp() + " " + riga;
-            // Inserisci in Supabase in un thread separato per non bloccare la risposta
             std::string pcCopy = pcId, entryCopy = entry;
             std::thread([pcCopy, entryCopy](){
                 supabaseInsert(pcCopy, entryCopy);
