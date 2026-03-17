@@ -55,7 +55,7 @@ std::string sanitizeId(const std::string& s) {
             out += c;
             if (out.size() >= 64) break;
         }
-    return out.empty() ? "pc_unknownTEST" : out;
+    return out.empty() ? "pc_unknown" : out;
 }
 
 void supabaseInsert(const std::string& pcId, const std::string& riga) {
@@ -152,11 +152,15 @@ void handleHTTP(int sock) {
         sendHTTP(sock, "application/json", "{\"status\":\"ok\"}");
 
     } else if (path == "/send" && method == "POST") {
+        // Debug: stampa tutto cio che arriva
+        std::cout << "QUERY=[" << query << "] BODY=[" << body << "]\n";
         std::string key = getParam(query, "key");
         if (key.empty()) key = getParam(body, "key");
-        std::string pcId = sanitizeId(getParam(query, "pc"));
-        if (pcId.empty()) pcId = sanitizeId(getParam(body, "pc"));
-        if (pcId.empty()) pcId = "pc_unknownTEST";
+        std::string pcRaw = getParam(query, "pc");
+        if (pcRaw.empty()) pcRaw = getParam(body, "pc");
+        std::cout << "pcRaw=[" << pcRaw << "]\n";
+        std::string pcId = sanitizeId(pcRaw);
+        if (pcId.empty()) pcId = "pc_unknown";
         std::string riga = getParam(body, "riga");
 
         if (key != PASSWORD) {
