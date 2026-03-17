@@ -42,17 +42,26 @@ function sbFetch(path, options) {
 }
 
 function refreshPCList() {
-    sbFetch("/rest/v1/logs?select=pc_id&order=pc_id.asc")
+    // Legge tutti i PC distinti con timestamp dell ultima riga
+    sbFetch("/rest/v1/logs?select=pc_id,ts&order=pc_id.asc,ts.desc")
     .then(function(r){ return r.json(); })
     .then(function(d){
-        var seen = {}, pcs = [];
-        d.forEach(function(row){ if(!seen[row.pc_id]){ seen[row.pc_id]=1; pcs.push(row.pc_id); } });
+        // Per ogni PC prendi solo l ultima riga (ts più recente)
+        var pcs = {}, now = Date.now();
+        d.forEach(function(row){
+            if (!pcs[row.pc_id]) pcs[row.pc_id] = row.ts;
+        });
         var sel = document.getElementById("pcSelect");
         var prev = sel.value;
         sel.innerHTML = "<option value=''>-- seleziona PC --</option>";
-        pcs.forEach(function(pc){
+        Object.keys(pcs).sort().forEach(function(pc){
+            var lastTs = new Date(pcs[pc]).getTime();
+            var diffSec = (now - lastTs) / 1000;
+            var attivo = diffSec < 10;
             var o = document.createElement("option");
-            o.value = pc; o.textContent = pc;
+            o.value = pc;
+            o.textContent = (attivo ? "● " : "○ ") + pc;
+            o.style.color = attivo ? "#00ff41" : "#555";
             if (pc === prev) o.selected = true;
             sel.appendChild(o);
         });
@@ -120,6 +129,7 @@ function clearLog() {
 }
 
 refreshPCList();
+setInterval(refreshPCList, 5000);
 </script>
 </body>
 </html>
