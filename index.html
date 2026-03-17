@@ -41,29 +41,39 @@ function sbFetch(path, options) {
     return fetch(SUPABASE_URL + path, options);
 }
 
+function userAtBottom() {
+    return (window.innerHeight + window.pageYOffset) >= document.body.offsetHeight - 100;
+}
+
 function refreshPCList() {
     // Legge tutti i PC distinti con timestamp dell ultima riga
     sbFetch("/rest/v1/logs?select=pc_id,ts&order=pc_id.asc,ts.desc")
     .then(function(r){ return r.json(); })
     .then(function(d){
         // Per ogni PC prendi solo l ultima riga (ts più recente)
-        var pcs = {}, now = Date.now();
+        // Raccogli l ultima riga per ogni PC
+        var pcs = {};
         d.forEach(function(row){
             if (!pcs[row.pc_id]) pcs[row.pc_id] = row.ts;
         });
-        var sel = document.getElementById("pcSelect");
-        var prev = sel.value;
-        sel.innerHTML = "<option value=''>-- seleziona PC --</option>";
-        Object.keys(pcs).sort().forEach(function(pc){
-            var lastTs = new Date(pcs[pc]).getTime();
-            var diffSec = (now - lastTs) / 1000;
-            var attivo = diffSec < 10;
-            var o = document.createElement("option");
-            o.value = pc;
-            o.textContent = (attivo ? "● " : "○ ") + pc;
-            o.style.color = attivo ? "#00ff41" : "#555";
-            if (pc === prev) o.selected = true;
-            sel.appendChild(o);
+        // Chiedi anche quali PC hanno trasmesso negli ultimi 15 secondi
+        sbFetch("/rest/v1/logs?select=pc_id&ts=gte." + new Date(Date.now()-15000).toISOString() + "&order=pc_id.asc")
+        .then(function(r2){ return r2.json(); })
+        .then(function(recenti){
+            var attivi = {};
+            recenti.forEach(function(row){ attivi[row.pc_id] = true; });
+            var sel = document.getElementById("pcSelect");
+            var prev = sel.value;
+            sel.innerHTML = "<option value=''>-- seleziona PC --</option>";
+            Object.keys(pcs).sort().forEach(function(pc){
+                var on = attivi[pc] === true;
+                var o = document.createElement("option");
+                o.value = pc;
+                o.textContent = (on ? "● " : "○ ") + pc;
+                o.style.color = on ? "#00ff41" : "#888";
+                if (pc === prev) o.selected = true;
+                sel.appendChild(o);
+            });
         });
     });
 }
