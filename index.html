@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <title>Vityaz Monitor</title>
 <style>
-body{background:#0a0a0a;color:#00ff41;font-family:monospace;padding:20px;margin:0}
+body{background:#0a0a0a;color:#00ff41;font-family:monospace;padding:20px;margin:0;padding-top:90px}
 h2{letter-spacing:4px;border-bottom:1px solid #00ff41;padding-bottom:8px}
-#controls{display:flex;align-items:center;gap:16px;margin:12px 0;flex-wrap:wrap}
+#header{position:fixed;top:0;left:0;right:0;background:#0a0a0a;padding:12px 20px;z-index:100;border-bottom:1px solid #1a1a1a}
+#controls{display:flex;align-items:center;gap:16px;margin:8px 0;flex-wrap:wrap}
 select{background:#111;color:#00ff41;border:1px solid #00ff41;padding:6px 12px;font-family:monospace;font-size:14px;cursor:pointer}
 button{background:#001a00;color:#00ff41;border:1px solid #00ff41;padding:6px 14px;font-family:monospace;cursor:pointer;font-size:13px}
 button:hover{background:#003300}
@@ -15,14 +16,14 @@ button:hover{background:#003300}
 </style>
 </head>
 <body>
-<h2>VITYAZ MONITOR</h2>
+<div id="header"><h2>VITYAZ MONITOR</h2>
 <div id="controls">
   <select id="pcSelect" onchange="changePC()"><option value="">-- seleziona PC --</option></select>
   <button onclick="refreshPCList()">Aggiorna lista PC</button>
   <button onclick="downloadLog()">Scarica log</button>
   <button onclick="clearLog()">Svuota log</button>
   <span id="stato">-</span>
-</div>
+</div></div>
 <div id="log"></div>
 
 <script>
