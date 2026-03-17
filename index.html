@@ -41,9 +41,13 @@ function sbFetch(path, options) {
     return fetch(SUPABASE_URL + path, options);
 }
 
-function userAtBottom() {
-    return (window.innerHeight + window.pageYOffset) >= document.body.offsetHeight - 100;
-}
+var followScroll = true;  // segui automaticamente il fondo
+
+// Se l utente scrolla su, smetti di seguire
+window.addEventListener("scroll", function() {
+    var distFromBottom = document.body.offsetHeight - window.innerHeight - window.pageYOffset;
+    followScroll = distFromBottom < 80;
+});
 
 function refreshPCList() {
     // Legge tutti i PC distinti con timestamp dell ultima riga
