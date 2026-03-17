@@ -134,6 +134,8 @@ void sendHTTP(int sock, const std::string& ctype, const std::string& body) {
 }
 
 void handleHTTP(int sock) {
+    // Piccola pausa per assicurarsi che il body sia arrivato completamente
+    usleep(5000); // 5ms
     std::string req = readFullRequest(sock);
     std::string method, fullpath;
     std::istringstream ss(req);
@@ -154,8 +156,9 @@ void handleHTTP(int sock) {
     } else if (path == "/send" && method == "POST") {
         std::string key = getParam(query, "key");
         if (key.empty()) key = getParam(body, "key");
-        std::string pcId = sanitizeId(getParam(query, "pc"));
-        if (pcId.empty()) pcId = sanitizeId(getParam(body, "pc"));
+        std::string pcRaw = getParam(query, "pc");
+        if (pcRaw.empty()) pcRaw = getParam(body, "pc");
+        std::string pcId = sanitizeId(pcRaw);
         if (pcId.empty()) pcId = "pc_unknown";
         std::string riga = getParam(body, "riga");
 
