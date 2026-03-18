@@ -58,6 +58,28 @@ std::string sanitizeId(const std::string& s) {
     return out.empty() ? "pc_unknown" : out;
 }
 
+// Estrae il timestamp dal formato: [HH:MM:SS] [YYYY-MM-DD HH:MM:SS.mmm] tasto
+// Restituisce stringa ISO oppure vuota se non trovata
+std::string extractMsgTs(const std::string& riga) {
+    // Cerca pattern [YYYY-MM-DD HH:MM:SS.mmm]
+    size_t start = riga.find('[');
+    while (start != std::string::npos) {
+        size_t end = riga.find(']', start);
+        if (end == std::string::npos) break;
+        std::string token = riga.substr(start+1, end-start-1);
+        // Controlla se e nel formato YYYY-MM-DD HH:MM:SS
+        if (token.size() >= 19 &&
+            token[4]=='-' && token[7]=='-' && token[10]==' ' &&
+            token[13]==':' && token[16]==':') {
+            // Converte spazio in T per formato ISO
+            token[10] = 'T';
+            return token;
+        }
+        start = riga.find('[', end);
+    }
+    return "";
+}
+
 void supabaseInsert(const std::string& pcId, const std::string& riga) {
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) return;
