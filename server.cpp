@@ -96,7 +96,7 @@ function poll() {
     // Legge solo le righe con id > lastId
     var url = "/rest/v1/logs?pc_id=eq." + encodeURIComponent(currentPC)
             + "&id=gt." + lastId
-            + "&order=msg_ts.asc,id.asc&select=id,riga,msg_ts";
+            + "&order=id.asc&select=id,riga";
     sbFetch(url)
     .then(function(r){ return r.json(); })
     .then(function(d){
