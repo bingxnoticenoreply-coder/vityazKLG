@@ -1,149 +1,237 @@
-<!DOCTYPE html>
-<html lang="it">
-<head>
-<meta charset="UTF-8">
-<title>Vityaz Monitor</title>
-<style>
-body{background:#0a0a0a;color:#00ff41;font-family:monospace;padding:20px;margin:0;padding-top:90px}
-h2{letter-spacing:4px;border-bottom:1px solid #00ff41;padding-bottom:8px}
-#header{position:fixed;top:0;left:0;right:0;background:#0a0a0a;padding:12px 20px;z-index:100;border-bottom:1px solid #1a1a1a}
-#controls{display:flex;align-items:center;gap:16px;margin:8px 0;flex-wrap:wrap}
-select{background:#111;color:#00ff41;border:1px solid #00ff41;padding:6px 12px;font-family:monospace;font-size:14px;cursor:pointer}
-button{background:#001a00;color:#00ff41;border:1px solid #00ff41;padding:6px 14px;font-family:monospace;cursor:pointer;font-size:13px}
-button:hover{background:#003300}
-#stato{font-size:12px;color:#555}
-#log{white-space:pre-wrap;font-size:14px;line-height:1.8;margin-top:12px}
-</style>
-</head>
-<body>
-<div id="header"><h2>VITYAZ MONITOR</h2>
-<div id="controls">
-  <select id="pcSelect" onchange="changePC()"><option value="">-- seleziona PC --</option></select>
-  <button onclick="refreshPCList()">Aggiorna lista PC</button>
-  <button onclick="downloadLog()">Scarica log</button>
-  <button onclick="clearLog()">Svuota log</button>
-  <span id="stato">-</span>
-</div></div>
-<div id="log"></div>
+#include <iostream>
+#include <string>
+#include <thread>
+#include <sstream>
+#include <cstring>
+#include <ctime>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
-<script>
-var SUPABASE_URL = "https://zyhvckzlwdoxubcgluzr.supabase.co";
-var SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5aHZja3psd2RveHViY2dsdXpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1ODU3NDYsImV4cCI6MjA4OTE2MTc0Nn0.ifTRzNwSDO3vFKxnJmpx2CPtQprbB7gBuEz85h7mLKQ";
+#define PASSWORD "vityaz2024"
 
-var currentPC = "", lastId = 0, pollTimer = null;
+std::string g_supabase_url = "";
+std::string g_supabase_key = "";
 
-function sbFetch(path, options) {
-    options = options || {};
-    options.headers = options.headers || {};
-    options.headers["apikey"] = SUPABASE_KEY;
-    options.headers["Authorization"] = "Bearer " + SUPABASE_KEY;
-    options.headers["Content-Type"] = "application/json";
-    return fetch(SUPABASE_URL + path, options);
+std::string timestamp() {
+    time_t now = time(0);
+    tm* t = localtime(&now);
+    char buf[32];
+    strftime(buf, sizeof(buf), "[%H:%M:%S]", t);
+    return std::string(buf);
 }
 
-var followScroll = true;  // segui automaticamente il fondo
-
-// Se l utente scrolla su, smetti di seguire
-window.addEventListener("scroll", function() {
-    var distFromBottom = document.body.offsetHeight - window.innerHeight - window.pageYOffset;
-    followScroll = distFromBottom < 80;
-});
-
-function refreshPCList() {
-    // Legge tutti i PC distinti con timestamp dell ultima riga
-    sbFetch("/rest/v1/logs?select=pc_id,ts&order=pc_id.asc,ts.desc")
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-        // Per ogni PC prendi solo l ultima riga (ts più recente)
-        // Raccogli l ultima riga per ogni PC
-        var pcs = {};
-        d.forEach(function(row){
-            if (!pcs[row.pc_id]) pcs[row.pc_id] = row.ts;
-        });
-        // Chiedi anche quali PC hanno trasmesso negli ultimi 15 secondi
-        sbFetch("/rest/v1/logs?select=pc_id&ts=gte." + new Date(Date.now()-15000).toISOString() + "&order=pc_id.asc")
-        .then(function(r2){ return r2.json(); })
-        .then(function(recenti){
-            var attivi = {};
-            recenti.forEach(function(row){ attivi[row.pc_id] = true; });
-            var sel = document.getElementById("pcSelect");
-            var prev = sel.value;
-            sel.innerHTML = "<option value=''>-- seleziona PC --</option>";
-            Object.keys(pcs).sort().forEach(function(pc){
-                var on = attivi[pc] === true;
-                var o = document.createElement("option");
-                o.value = pc;
-                o.textContent = (on ? "● " : "○ ") + pc;
-                o.style.color = on ? "#00ff41" : "#888";
-                if (pc === prev) o.selected = true;
-                sel.appendChild(o);
-            });
-        });
-    });
+std::string urlDecode(const std::string& s) {
+    std::string out;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i]=='%' && i+2 < s.size()) {
+            int c = strtol(s.substr(i+1,2).c_str(), nullptr, 16);
+            out += (char)c; i += 2;
+        } else if (s[i]=='+') out += ' ';
+        else out += s[i];
+    }
+    return out;
 }
 
-function changePC() {
-    currentPC = document.getElementById("pcSelect").value;
-    lastId = 0;
-    document.getElementById("log").textContent = "";
-    document.getElementById("stato").textContent = currentPC ? "Caricamento..." : "-";
-    if (pollTimer) clearTimeout(pollTimer);
-    if (currentPC) poll();
+std::string getParam(const std::string& src, const std::string& key) {
+    std::string search = key + "=";
+    size_t pos = src.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    size_t end = src.find('&', pos);
+    return urlDecode(end == std::string::npos
+        ? src.substr(pos) : src.substr(pos, end-pos));
 }
 
-function poll() {
-    if (!currentPC) return;
-    // Legge solo le righe con id > lastId
-    var url = "/rest/v1/logs?pc_id=eq." + encodeURIComponent(currentPC)
-            + "&id=gt." + lastId
-            + "&order=id.asc&select=id,riga";
-    sbFetch(url)
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-        if (d && d.length > 0) {
-            var log = document.getElementById("log");
-            d.forEach(function(row){
-                log.textContent += row.riga + "\n";
-                lastId = row.id;
-            });
-            window.scrollTo(0, document.body.scrollHeight);
+// Permette lettere, numeri, trattino e underscore
+std::string sanitizeId(const std::string& s) {
+    std::string out;
+    for (char c : s)
+        if (isalnum(c) || c=='_' || c=='-') {
+            out += c;
+            if (out.size() >= 64) break;
         }
-        document.getElementById("stato").textContent = "LIVE [" + currentPC + "] ultimo id: " + lastId;
-        pollTimer = setTimeout(poll, 2000);
-    })
-    .catch(function(){
-        document.getElementById("stato").textContent = "Errore, riprovo...";
-        pollTimer = setTimeout(poll, 3000);
-    });
+    return out.empty() ? "pc_unknown" : out;
 }
 
-function downloadLog() {
-    if (!currentPC) { alert("Seleziona prima un PC"); return; }
-    sbFetch("/rest/v1/logs?pc_id=eq." + encodeURIComponent(currentPC) + "&order=id.asc&select=riga")
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-        var text = d.map(function(r){ return r.riga; }).join("\n");
-        var blob = new Blob([text], {type:"text/plain"});
-        var a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = currentPC + ".txt";
-        a.click();
-    });
+// Estrae il timestamp dal formato: [HH:MM:SS] [YYYY-MM-DD HH:MM:SS.mmm] tasto
+// Restituisce stringa ISO oppure vuota se non trovata
+std::string extractMsgTs(const std::string& riga) {
+    // Cerca pattern [YYYY-MM-DD HH:MM:SS.mmm]
+    size_t start = riga.find('[');
+    while (start != std::string::npos) {
+        size_t end = riga.find(']', start);
+        if (end == std::string::npos) break;
+        std::string token = riga.substr(start+1, end-start-1);
+        // Controlla se e nel formato YYYY-MM-DD HH:MM:SS
+        if (token.size() >= 19 &&
+            token[4]=='-' && token[7]=='-' && token[10]==' ' &&
+            token[13]==':' && token[16]==':') {
+            // Converte spazio in T per formato ISO
+            token[10] = 'T';
+            return token;
+        }
+        start = riga.find('[', end);
+    }
+    return "";
 }
 
-function clearLog() {
-    if (!currentPC) { alert("Seleziona prima un PC"); return; }
-    if (!confirm("Svuotare il log di " + currentPC + "?")) return;
-    sbFetch("/rest/v1/logs?pc_id=eq." + encodeURIComponent(currentPC), { method: "DELETE" })
-    .then(function(){
-        document.getElementById("log").textContent = "";
-        lastId = 0;
-        document.getElementById("stato").textContent = "Log svuotato";
-    });
+void supabaseInsert(const std::string& pcId, const std::string& riga) {
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return;
+
+    struct addrinfo hints{}, *res;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(g_supabase_url.c_str(), "443", &hints, &res) != 0) {
+        SSL_CTX_free(ctx); return;
+    }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    connect(sock, res->ai_addr, res->ai_addrlen);
+    freeaddrinfo(res);
+
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, sock);
+    SSL_set_tlsext_host_name(ssl, g_supabase_url.c_str());
+    if (SSL_connect(ssl) <= 0) {
+        SSL_free(ssl); SSL_CTX_free(ctx); close(sock); return;
+    }
+
+    std::string escPc, escRiga;
+    for (char c : pcId)  { if(c=='"') escPc+="\\\""; else escPc+=c; }
+    for (char c : riga)  { if(c=='"') escRiga+="\\\""; else if(c=='\\') escRiga+="\\\\"; else escRiga+=c; }
+
+    std::string body = "{\"pc_id\":\"" + escPc + "\",\"riga\":\"" + escRiga + "\"}";
+    std::string req =
+        "POST /rest/v1/logs HTTP/1.1\r\n"
+        "Host: " + g_supabase_url + "\r\n"
+        "apikey: " + g_supabase_key + "\r\n"
+        "Authorization: Bearer " + g_supabase_key + "\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: " + std::to_string(body.size()) + "\r\n"
+        "Connection: close\r\n\r\n" + body;
+
+    SSL_write(ssl, req.c_str(), req.size());
+    char buf[1024]; int n;
+    while ((n = SSL_read(ssl, buf, sizeof(buf)-1)) > 0) {}
+    SSL_free(ssl); SSL_CTX_free(ctx); close(sock);
 }
 
-refreshPCList();
-setInterval(refreshPCList, 5000);
-</script>
-</body>
-</html>
+std::string readFullRequest(int sock) {
+    std::string req;
+    char buf[4096];
+    while (req.find("\r\n\r\n") == std::string::npos) {
+        int n = recv(sock, buf, sizeof(buf)-1, 0);
+        if (n <= 0) break;
+        buf[n] = 0; req += std::string(buf, n);
+    }
+    size_t headerEnd = req.find("\r\n\r\n");
+    if (headerEnd == std::string::npos) return req;
+    int cl = 0;
+    size_t clPos = req.find("Content-Length: ");
+    if (clPos != std::string::npos) cl = atoi(req.substr(clPos+16).c_str());
+    std::string body = req.substr(headerEnd+4);
+    while ((int)body.size() < cl) {
+        int n = recv(sock, buf, std::min(cl-(int)body.size(),(int)sizeof(buf)-1), 0);
+        if (n <= 0) break;
+        body += std::string(buf, n);
+    }
+    return req.substr(0, headerEnd+4) + body;
+}
+
+void sendHTTP(int sock, const std::string& ctype, const std::string& body) {
+    std::ostringstream r;
+    r << "HTTP/1.1 200 OK\r\n"
+      << "Content-Type: " << ctype << "\r\n"
+      << "Content-Length: " << body.size() << "\r\n"
+      << "Access-Control-Allow-Origin: *\r\n"
+      << "Connection: close\r\n\r\n" << body;
+    std::string resp = r.str();
+    send(sock, resp.c_str(), resp.size(), 0);
+}
+
+void handleHTTP(int sock) {
+    // Piccola pausa per assicurarsi che il body sia arrivato completamente
+    usleep(5000); // 5ms
+    std::string req = readFullRequest(sock);
+    std::string method, fullpath;
+    std::istringstream ss(req);
+    ss >> method >> fullpath;
+
+    std::string path, query;
+    size_t q = fullpath.find('?');
+    if (q != std::string::npos) { path=fullpath.substr(0,q); query=fullpath.substr(q+1); }
+    else path = fullpath;
+
+    std::string body;
+    size_t bp = req.find("\r\n\r\n");
+    if (bp != std::string::npos) body = req.substr(bp+4);
+
+    if (path == "/ping") {
+        sendHTTP(sock, "application/json", "{\"status\":\"ok\"}");
+
+    } else if (path == "/send" && method == "POST") {
+        std::string key = getParam(query, "key");
+        if (key.empty()) key = getParam(body, "key");
+        std::string pcRaw = getParam(query, "pc");
+        if (pcRaw.empty()) pcRaw = getParam(body, "pc");
+        std::string pcId = sanitizeId(pcRaw);
+        if (pcId.empty()) pcId = "pc_unknown";
+        std::string riga = getParam(body, "riga");
+
+        if (key != PASSWORD) {
+            sendHTTP(sock, "application/json", "{\"status\":\"error\",\"msg\":\"password errata\"}");
+        } else if (riga.empty()) {
+            sendHTTP(sock, "application/json", "{\"status\":\"error\",\"msg\":\"riga vuota\"}");
+        } else {
+            std::string entry = timestamp() + " " + riga;
+            std::string pcCopy = pcId, entryCopy = entry;
+            std::thread([pcCopy, entryCopy](){
+                supabaseInsert(pcCopy, entryCopy);
+            }).detach();
+            std::cout << "[" << pcId << "] " << entry << "\n";
+            sendHTTP(sock, "application/json", "{\"status\":\"ok\"}");
+        }
+    } else {
+        sendHTTP(sock, "text/plain", "Not found");
+    }
+    close(sock);
+}
+
+int main() {
+    const char* url = getenv("SUPABASE_URL");
+    const char* key = getenv("SUPABASE_KEY");
+    if (!url || !key) {
+        std::cerr << "ERRORE: SUPABASE_URL e SUPABASE_KEY richieste\n";
+        return 1;
+    }
+    g_supabase_url = std::string(url);
+    g_supabase_key = std::string(key);
+    std::cout << "Supabase: " << g_supabase_url << "\n";
+
+    int port = 8080;
+    const char* envPort = getenv("PORT");
+    if (envPort) port = atoi(envPort);
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    bind(fd, (sockaddr*)&addr, sizeof(addr));
+    listen(fd, 32);
+    std::cout << "=== Vityaz Server porta " << port << " ===\n";
+
+    while (true) {
+        int client = accept(fd, NULL, NULL);
+        if (client >= 0) std::thread(handleHTTP, client).detach();
+    }
+    return 0;
+}
