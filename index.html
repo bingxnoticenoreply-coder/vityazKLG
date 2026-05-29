@@ -108,19 +108,70 @@ function poll() {
     });
 }
 
-function downloadLog() {
+python3 << 'EOF'
+with open('/mnt/user-data/outputs/index.html', 'r') as f:
+    content = f.read()
+
+old = '''function downloadLog() {
     if (!currentPC) { alert("Seleziona prima un PC"); return; }
     sbFetch("/rest/v1/logs?pc_id=eq." + encodeURIComponent(currentPC) + "&order=id.asc&select=riga")
     .then(function(r){ return r.json(); })
     .then(function(d){
-        var text = d.map(function(r){ return r.riga; }).join("\n");
+        var text = d.map(function(r){ return r.riga; }).join("\\n");
         var blob = new Blob([text], {type:"text/plain"});
         var a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = currentPC + ".txt";
         a.click();
     });
-}
+}'''
+
+new = '''function downloadLog() {
+    if (!currentPC) { alert("Seleziona prima un PC"); return; }
+    document.getElementById("stato").textContent = "Download in corso...";
+    var allRows = [];
+    var pageSize = 1000;
+    var offset = 0;
+
+    function fetchPage() {
+        sbFetch("/rest/v1/logs?pc_id=eq." + encodeURIComponent(currentPC)
+              + "&order=id.asc&select=riga"
+              + "&limit=" + pageSize + "&offset=" + offset)
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d && d.length > 0) {
+                d.forEach(function(row){ allRows.push(row.riga); });
+                offset += d.length;
+                document.getElementById("stato").textContent = "Download: " + offset + " righe...";
+                if (d.length === pageSize) {
+                    fetchPage(); // ci sono ancora pagine
+                } else {
+                    saveFile(); // ultima pagina
+                }
+            } else {
+                saveFile();
+            }
+        });
+    }
+
+    function saveFile() {
+        var text = allRows.join("\\n");
+        var blob = new Blob([text], {type:"text/plain"});
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = currentPC + ".txt";
+        a.click();
+        document.getElementById("stato").textContent = "LIVE [" + currentPC + "] id: " + lastId;
+    }
+
+    fetchPage();
+}'''
+
+content = content.replace(old, new)
+with open('/mnt/user-data/outputs/index.html', 'w') as f:
+    f.write(content)
+print("Done")
+EOF
 
 function clearLog() {
     if (!currentPC) { alert("Seleziona prima un PC"); return; }
